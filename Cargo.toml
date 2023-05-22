@@ -10,4 +10,4 @@ crossterm = { version = "0.26", features = [ "serde" ] }
 serde = {version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ratatui = { version = "0.20.1", default-features = false, features = ['crossterm', 'serde'] }
-tobj = "0.0.3"
+tobj = "4.0.0"

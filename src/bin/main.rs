@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use tobj;
-use std::{error::Error, io};
+use std::{error::Error, io, io::prelude::*, fs, process::Command};
 
 struct StateList<T> {
     state: ListState,
@@ -97,6 +97,10 @@ impl<'a> App<'a> {
             normals: Vec::new(),
             texcoords: Vec::new(),
             indices: Vec::new(),
+            normal_indices: Vec::new(),
+            texcoord_indices: Vec::new(),
+            face_arities: Vec::new(),
+            vertex_color: Vec::new(),
             material_id: None,
         };
         cube_mesh.positions = vec![
@@ -143,10 +147,10 @@ impl<'a> App<'a> {
     }
 
     fn obj_from_path(path: &Path) {
-        let obj = tobj::load_obj(path);
-        assert!(obj.is_ok());
+        //let obj = tobj::load_obj(path);
+        //assert!(obj.is_ok());
 
-        let (models, materials) = obj.expect("Failed to load OBJ file");
+        //let (models, materials) = obj.expect("Failed to load OBJ file");
 
         //for (i, m) in models.iter().enumerate() {
         //    let mesh = &m.mesh();
@@ -200,7 +204,22 @@ impl<'a> App<'a> {
     }
 
     pub fn open_file(&mut self) {
+        let path = self.get_input("File Location: ");
+        
+        let output = Command::new("python3")
+            .args(["microservice_helper.py", path])
+            .output()
+            .expect("failed to execute process");
 
+        //let obj = tobj::load_obj(Path::new(path), &tobj::GPU_LOAD_OPTIONS);
+        //assert!(obj.is_ok());
+
+        //let (models, materials) = obj.expect("Failed to load OBJ file");
+
+        //self.vertices = StateList::with_items(models[0].mesh.positions.clone());
+        //self.faces = StateList::with_items(models[0].mesh.indices.clone());
+
+        //self.models = StateList::with_items(models);
     }
 
     pub fn write_file(&mut self) {
@@ -227,8 +246,8 @@ impl<'a> App<'a> {
 
     }
 
-    fn get_input(&mut self) -> &str {
-        "test"
+    fn get_input(&mut self, prompt: &str) -> &str {
+        "./cube.stl"
     }
 }
 
