@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use tobj;
-use std::{error::Error, io, io::prelude::*, fs, process::Command};
+use std::{error::Error, io, io::prelude::*, fs, process::Command, thread, time};
 
 struct StateList<T> {
     state: ListState,
@@ -70,7 +70,11 @@ enum AppMode {
     VertexList,
     FaceList,
     Help,
-    Input,
+}
+
+enum StatusMode {
+    Normal,
+    Open,
 }
 
 struct App<'a> {
@@ -84,6 +88,7 @@ struct App<'a> {
 
     input: String,
     status: String,
+    status_mode: StatusMode,
 
     pub tab_titles: Vec<&'a str>,
     pub tab_index: usize,
@@ -140,6 +145,7 @@ impl<'a> App<'a> {
 
             input: "".to_string(),
             status: "Welcome to tui_obj!".to_string(),
+            status_mode: StatusMode::Normal,
 
             tab_titles: vec!["Vertex", "Face", "Help"],
             tab_index: 2,
@@ -203,23 +209,36 @@ impl<'a> App<'a> {
 
     }
 
-    pub fn open_file(&mut self) {
-        let path = self.get_input("File Location: ");
+    pub fn open_file(&mut self, path: &str) {
+        let mut new_path = path.to_string();
+        if path.contains(".stl") {
+            let mut output = Command::new("python3")
+                .args(["microservice_helper.py", path])
+                .output()
+                .expect("failed to execute process");
+
+            output.stdout.pop(); //remove null terminator!!
+
+            new_path = match std::str::from_utf8(&output.stdout) {
+                Ok(v) => v.to_string(),
+                Err(e) => panic!("Invalid UTF-8: {}", e)
+            };
+        }
+
+        let obj = tobj::load_obj(Path::new(&new_path), &tobj::GPU_LOAD_OPTIONS);
+        if !obj.is_ok() {
+            self.status = format!("Failed to load file: {}", path);
+            return;
+        }
+
+        let (models, materials) = obj.expect("Failed to load OBJ file");
+
+        self.vertices = StateList::with_items(models[0].mesh.positions.clone());
+        self.faces = StateList::with_items(models[0].mesh.indices.clone());
+
+        self.models = StateList::with_items(models);
         
-        let output = Command::new("python3")
-            .args(["microservice_helper.py", path])
-            .output()
-            .expect("failed to execute process");
-
-        //let obj = tobj::load_obj(Path::new(path), &tobj::GPU_LOAD_OPTIONS);
-        //assert!(obj.is_ok());
-
-        //let (models, materials) = obj.expect("Failed to load OBJ file");
-
-        //self.vertices = StateList::with_items(models[0].mesh.positions.clone());
-        //self.faces = StateList::with_items(models[0].mesh.indices.clone());
-
-        //self.models = StateList::with_items(models);
+        self.status = format!("Opened file: {}", path);
     }
 
     pub fn write_file(&mut self) {
@@ -244,10 +263,6 @@ impl<'a> App<'a> {
 
     fn restore(&mut self) {
 
-    }
-
-    fn get_input(&mut self, prompt: &str) -> &str {
-        "./cube.stl"
     }
 }
 
@@ -276,29 +291,58 @@ fn run<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
         terminal.draw(|f| ui(f, &mut app))?;        
 
         if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    //commands
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('o') => app.open_file(),
-                    KeyCode::Char('w') => app.write_file(),
-                    KeyCode::Char('u') => app.restore(),
-                    KeyCode::Right => app.next_model(),
-                    KeyCode::Left => app.prev_model(),
-                    //tabs
-                    KeyCode::Char('v') => app.set_tab(0),
-                    KeyCode::Char('f') => app.set_tab(1),
-                    KeyCode::Char('h') => app.set_tab(2),
-                    _ => {}
-                }
-                if app.tab_index < 2 {
+      	    match app.status_mode {
+                StatusMode::Normal => if key.kind == KeyEventKind::Press {
                     match key.code {
-                        //list controls
-                        KeyCode::Down => app.next_item(),
-                        KeyCode::Up => app.prev_item(),
-                        KeyCode::Char('d') => app.new_item(),
-                        KeyCode::Char('d') => app.delete_item(),
-                        KeyCode::Char('t') => app.translate(),
+                        //commands
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('o') => {
+                            app.status = "".to_string();
+                            app.status_mode = StatusMode::Open;
+                        },
+                        KeyCode::Char('w') => app.write_file(),
+                        KeyCode::Char('u') => app.restore(),
+                        KeyCode::Right => app.next_model(),
+                        KeyCode::Left => app.prev_model(),
+                        //tabs
+                        KeyCode::Char('v') => app.set_tab(0),
+                        KeyCode::Char('f') => app.set_tab(1),
+                        KeyCode::Char('h') => app.set_tab(2),
+                        _ => {}
+                    }
+                    if app.tab_index < 2 {
+                        match key.code {
+                            //list controls
+                            KeyCode::Down => app.next_item(),
+                            KeyCode::Up => app.prev_item(),
+                            KeyCode::Char('d') => app.new_item(),
+                            KeyCode::Char('d') => app.delete_item(),
+                            KeyCode::Char('t') => app.translate(),
+                            _ => {}
+                        }
+                    }
+                },
+                _ => if key.kind == KeyEventKind::Press { 
+                    match key.code {
+                        KeyCode::Enter => {
+                            match app.status_mode {
+                                StatusMode::Open => {
+                                    app.status_mode = StatusMode::Normal;
+                                    app.open_file(&app.status.to_string());
+                                },
+                                _ => unreachable!()
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            app.status.push(c);
+                        }
+                        KeyCode::Backspace => {
+                            app.status.pop();
+                        }
+                        KeyCode::Esc => {
+                            app.status_mode = StatusMode::Normal;
+                            app.status = "Operation cancelled".to_string();
+                        }
                         _ => {}
                     }
                 }
@@ -412,16 +456,46 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                 .border_type(BorderType::Plain),
         );
 
-    let status_bar = Paragraph::new(&*app.status)
-        .style(Style::default().fg(Color::LightCyan))
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
+    let status_bar;
+    
+    match app.status_mode {
+        StatusMode::Normal => {
+            status_bar = Paragraph::new(&*app.status)
+                .style(Style::default().fg(Color::LightCyan))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .style(Style::default().fg(Color::White))
+                        .title("Status Update")
+                        .border_type(BorderType::Plain),
+                );
+        },
+        StatusMode::Open => {
+            status_bar = Paragraph::new(&*app.status)
                 .style(Style::default().fg(Color::White))
-                .title("Status Update")
-                .border_type(BorderType::Plain),
-        );
+                .alignment(Alignment::Left)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .style(Style::default().fg(Color::Yellow))
+                        .title("Open File")
+                        .border_type(BorderType::Plain),
+                );
+        },
+        _ => {
+            status_bar = Paragraph::new(&*app.status)
+                .style(Style::default().fg(Color::White))
+                .alignment(Alignment::Left)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .style(Style::default().fg(Color::Yellow))
+                        .title("")
+                        .border_type(BorderType::Plain),
+                );
+        }
+    }
 
     let footer = Paragraph::new("Q | Quit   Up/Down | Select")
         .style(Style::default().fg(Color::White))
