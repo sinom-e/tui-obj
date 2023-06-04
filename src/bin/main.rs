@@ -368,6 +368,24 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
         )
         .split(size);
 
+    draw_header(f, app, chunks[0]);
+    draw_tab_menu(f, app, chunks[1]);
+
+    match app.tab_index {
+        0 => draw_vertex_tab(f, app, chunks[2]),
+        1 => draw_face_tab(f, app, chunks[2]),
+        2 => draw_help(f, app, chunks[2]),
+        _ => unreachable!(),
+    };
+
+    draw_status(f, app, chunks[3]);
+    draw_footer(f, app, chunks[4]);
+}
+
+fn draw_header<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
     let header = Paragraph::new("tui_OBJ 2023 - copyright Simon Eagar - all rights reserved")
         .style(Style::default().fg(Color::LightCyan))
         .alignment(Alignment::Center)
@@ -378,7 +396,14 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                 .title("tui_OBJ")
                 .border_type(BorderType::Plain),
         );
-            
+    
+    f.render_widget(header, area);
+}
+
+fn draw_tab_menu<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
     let tab_menu = app
         .tab_titles
         .iter()
@@ -402,60 +427,14 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().fg(Color::Yellow))
         .divider(Span::raw("|"));
-
-    let mut vertices: Vec<ListItem> = vec![];
     
-    for i in 0..app.vertices.items.len() / 3 {
-        let mut lines = Spans::from(vec![
-            Span::raw(format!("Vertex {}:", i + 1)),
-            Span::raw(format!("    {}", app.vertices.items[3 * i])),
-            Span::raw(format!("    {}", app.vertices.items[3 * i + 1])),
-            Span::raw(format!("    {}", app.vertices.items[3 * i + 2])),
-        ]);
-        let mut lines_item: ListItem = ListItem::new(lines);
-        vertices.push(lines_item);
-    }
+    f.render_widget(tabs, area);
+}
 
-    let list_vertex = List::new(vertices)
-        .block(Block::default().borders(Borders::ALL).title("Vertices"))
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
-
-    let mut faces: Vec<ListItem> = vec![];
-    
-    for i in 0..app.faces.items.len() / 3 {
-        let mut lines = Spans::from(vec![
-            Span::raw(format!("Face {}:", i + 1)),
-            Span::raw(format!("    {}", app.faces.items[3 * i])),
-            Span::raw(format!("    {}", app.faces.items[3 * i + 1])),
-            Span::raw(format!("    {}", app.faces.items[3 * i + 2])),
-        ]);
-        let mut lines_item: ListItem = ListItem::new(lines);
-        faces.push(lines_item);
-    }
-
-    let list_face = List::new(faces)
-        .block(Block::default().borders(Borders::ALL).title("Faces"))
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
-
-    let help = Paragraph::new("Main Commands\n    Q | Quit        - Close the program\n\n    H | Help        - Switch to this interface\n\n    V | Vertex Mode - Switch to vertex editing interface\n\n    F | Face Mode   - Switch to face editing interface\n\nVertex Mode\n\nFaces Mode")
-        .style(Style::default().fg(Color::White))
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().fg(Color::White))
-                .title("Quick Commands")
-                .border_type(BorderType::Plain),
-        );
-
+fn draw_status<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
     let status_bar;
     
     match app.status_mode {
@@ -496,7 +475,14 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                 );
         }
     }
+    
+    f.render_widget(status_bar, area);
+}
 
+fn draw_footer<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
     let footer = Paragraph::new("Q | Quit   Up/Down | Select")
         .style(Style::default().fg(Color::White))
         .alignment(Alignment::Center)
@@ -507,17 +493,149 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
                 .title("Help")
                 .border_type(BorderType::Plain),
         );
+    
+    f.render_widget(footer, area);
+}
 
-    f.render_widget(header, chunks[0]);
-    f.render_widget(tabs, chunks[1]);
+fn draw_vertex_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(
+            [
+                Constraint::Percentage(25),
+                Constraint::Percentage(75),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+    draw_vertex_list(f, app, chunks[0]);
+    draw_viewport(f, app, chunks[1]);
+}
 
-    match app.tab_index {
-        0 => f.render_stateful_widget(list_vertex, chunks[2], &mut app.vertices.state),
-        1 => f.render_stateful_widget(list_face, chunks[2], &mut app.faces.state),
-        2 => f.render_widget(help, chunks[2]),
-        _ => unreachable!(),
-    };
+fn draw_face_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(
+            [
+                Constraint::Percentage(25),
+                Constraint::Percentage(75),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+    draw_face_list(f, app, chunks[0]);
+    draw_viewport(f, app, chunks[1]);
+}
 
-    f.render_widget(status_bar, chunks[3]);
-    f.render_widget(footer, chunks[4]);
+fn draw_vertex_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let mut vertices: Vec<ListItem> = vec![];
+    
+    for i in 0..app.vertices.items.len() / 3 {
+        let mut lines = Spans::from(vec![
+            Span::raw(format!("Vertex {}:", i + 1)),
+            Span::raw(format!("    {}", app.vertices.items[3 * i])),
+            Span::raw(format!("    {}", app.vertices.items[3 * i + 1])),
+            Span::raw(format!("    {}", app.vertices.items[3 * i + 2])),
+        ]);
+        let mut lines_item: ListItem = ListItem::new(lines);
+        vertices.push(lines_item);
+    }
+
+    let list_vertex = List::new(vertices)
+        .block(Block::default().borders(Borders::ALL).title("Vertices"))
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+    
+    f.render_stateful_widget(list_vertex, area, &mut app.vertices.state);
+}
+
+fn draw_face_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let mut faces: Vec<ListItem> = vec![];
+    
+    for i in 0..app.faces.items.len() / 3 {
+        let mut lines = Spans::from(vec![
+            Span::raw(format!("Face {}:", i + 1)),
+            Span::raw(format!("    {}", app.faces.items[3 * i])),
+            Span::raw(format!("    {}", app.faces.items[3 * i + 1])),
+            Span::raw(format!("    {}", app.faces.items[3 * i + 2])),
+        ]);
+        let mut lines_item: ListItem = ListItem::new(lines);
+        faces.push(lines_item);
+    }
+
+    let list_face = List::new(faces)
+        .block(Block::default().borders(Borders::ALL).title("Faces"))
+        .highlight_style(
+            Style::default()
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+    
+    f.render_stateful_widget(list_face, area, &mut app.faces.state);
+}
+
+fn draw_viewport<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let viewport = Canvas::default()
+    	.block(Block::default().title("Viewport").borders(Borders::ALL))
+    	.x_bounds([-180.0, 180.0])
+    	.y_bounds([-90.0, 90.0])
+    	.paint(|ctx| {
+        	ctx.draw(&Map {
+            	resolution: MapResolution::High,
+                color: Color::White
+        	});
+        	ctx.layer();
+            ctx.draw(&Line {
+                x1: 0.0,
+                y1: 10.0,
+                x2: 10.0,
+                y2: 10.0,
+                color: Color::White,
+            });
+            ctx.draw(&Rectangle {
+                x: 10.0,
+                y: 20.0,
+                width: 10.0,
+                height: 10.0,
+                color: Color::Red
+            });
+        });
+
+    f.render_widget(viewport, area);
+}
+
+fn draw_help<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let help = Paragraph::new("Main Commands\n    Q | Quit        - Close the program\n\n    H | Help        - Switch to this interface\n\n    V | Vertex Mode - Switch to vertex editing interface\n\n    F | Face Mode   - Switch to face editing interface\n\nVertex Mode\n\nFaces Mode")
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Left)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White))
+                .title("Quick Commands")
+                .border_type(BorderType::Plain),
+        );
+    
+    f.render_widget(help, area);
 }
