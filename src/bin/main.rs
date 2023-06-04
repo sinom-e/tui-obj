@@ -10,7 +10,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Span, Spans},
-    widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle},
+    widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle, Points},
     widgets::{
         Axis, BarChart, Block, Borders, BorderType, Cell, Chart, Dataset, Gauge, LineGauge, List, ListItem,
         ListState, Paragraph, Row, Sparkline, Table, TableState, Tabs, Wrap,
@@ -89,6 +89,8 @@ struct App<'a> {
     input: String,
     status: String,
     status_mode: StatusMode,
+    
+    rotation_offset: f64,
 
     pub tab_titles: Vec<&'a str>,
     pub tab_index: usize,
@@ -147,6 +149,8 @@ impl<'a> App<'a> {
             status: "Welcome to tui_obj!".to_string(),
             status_mode: StatusMode::Normal,
 
+            rotation_offset: 0.0,
+            
             tab_titles: vec!["Vertex", "Face", "Help"],
             tab_index: 2,
         }
@@ -288,6 +292,8 @@ fn main() -> io::Result<()> {
 
 fn run<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
+        app.rotation_offset += 0.01;
+        
         terminal.draw(|f| ui(f, &mut app))?;        
 
         if let Event::Key(key) = event::read()? {
@@ -593,31 +599,29 @@ fn draw_viewport<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
 where
     B: Backend,
 {
-    let viewport = Canvas::default()
+    let mut viewport = Canvas::default()
     	.block(Block::default().title("Viewport").borders(Borders::ALL))
-    	.x_bounds([-180.0, 180.0])
-    	.y_bounds([-90.0, 90.0])
-    	.paint(|ctx| {
-        	ctx.draw(&Map {
-            	resolution: MapResolution::High,
-                color: Color::White
-        	});
-        	ctx.layer();
-            ctx.draw(&Line {
-                x1: 0.0,
-                y1: 10.0,
-                x2: 10.0,
-                y2: 10.0,
-                color: Color::White,
-            });
-            ctx.draw(&Rectangle {
-                x: 10.0,
-                y: 20.0,
-                width: 10.0,
-                height: 10.0,
-                color: Color::Red
-            });
+    	.x_bounds([-10.0, 10.0])
+    	.y_bounds([-10.0, 10.0]);
+    
+    let mut edgemap: Vec<bool> = vec![false; app.vertices.items.len() * app.vertices.items.len()];
+    
+    let positions = &app.vertices.items;
+    
+    let mut points: Vec<(f64, f64)> = Vec::new();
+      
+    for i in 0..positions.len() / 3 {
+        let j = i * 3;
+        let x = positions[j] as f64 * app.rotation_offset.sin() + positions[j + 2] as f64 * app.rotation_offset.cos();
+        points.push((x, positions[j+1] as f64));
+    }
+    
+    viewport = viewport.paint(|ctx| {
+        ctx.draw(&Points {
+            coords: &points,
+            color: Color::White,
         });
+    });
 
     f.render_widget(viewport, area);
 }
@@ -626,7 +630,22 @@ fn draw_help<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
 where
     B: Backend,
 {
-    let help = Paragraph::new("Main Commands\n    Q | Quit        - Close the program\n\n    H | Help        - Switch to this interface\n\n    V | Vertex Mode - Switch to vertex editing interface\n\n    F | Face Mode   - Switch to face editing interface\n\nVertex Mode\n\nFaces Mode")
+    let help = Paragraph::new( //formatted as it would be displayed
+"Main Commands\n
+    Q | Quit        - Close the program\n
+\n
+    H | Help        - Switch to this interface\n
+\n
+    V | Vertex Mode - Switch to vertex editing interface\n
+\n
+    F | Face Mode   - Switch to face editing interface\n
+\n
+    O | Open File   - Open .OBJ or .STL file\n
+\n
+Vertex Mode\n
+\n
+Faces Mode"
+        )
         .style(Style::default().fg(Color::White))
         .alignment(Alignment::Left)
         .block(
