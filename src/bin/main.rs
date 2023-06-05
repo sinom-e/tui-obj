@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{error::Error, path::Path, io, io::prelude::*, fs, process::Command, thread, time, cmp, sync::Mutex, sync::Arc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -10,7 +10,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Span, Spans},
-    widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle, Points},
+    widgets::canvas::{Canvas, Context, Line, Map, MapResolution, Rectangle, Points, Painter},
     widgets::{
         Axis, BarChart, Block, Borders, BorderType, Cell, Chart, Dataset, Gauge, LineGauge, List, ListItem,
         ListState, Paragraph, Row, Sparkline, Table, TableState, Tabs, Wrap,
@@ -18,14 +18,13 @@ use ratatui::{
     Frame, Terminal,
 };
 use tobj;
-use std::{error::Error, io, io::prelude::*, fs, process::Command, thread, time};
 
 struct StateList<T> {
     state: ListState,
     items: Vec<T>,
 }
 
-impl<T> StateList<T> {
+impl<T> StateList<T> { //interactive item list
     fn with_items(items: Vec<T>) -> StateList<T> {
         StateList {
             state: ListState::default(),
@@ -66,13 +65,13 @@ impl<T> StateList<T> {
     }
 }
 
-enum AppMode {
+enum AppMode { //app states
     VertexList,
     FaceList,
     Help,
 }
 
-enum StatusMode {
+enum StatusMode { //command states
     Normal,
     Open,
 }
@@ -80,17 +79,21 @@ enum StatusMode {
 struct App<'a> {
     pub mode: AppMode,
     
-    models: StateList<tobj::Model>,
+    models: StateList<tobj::Model>, //list of loaded models (not yet used)
 
-    vertices: StateList<f32>,
+    vertices: StateList<f32>, //list of vertex coordinates
 
-    faces: StateList<u32>,
+    faces: StateList<u32>, //list of vertex indices forming triangular faces
 
-    input: String,
-    status: String,
-    status_mode: StatusMode,
+    input: String, //used for commands
+    status: String, //used for user feedback
+    status_mode: StatusMode, //current command state
     
-    rotation_offset: f64,
+    rotation_offset: f64, //rotation tick for rendering
+    x_offset: f64, //viewport translation
+    y_offset: f64,
+    zoom: f64, //scaled bounds of viewport
+    top_down: bool, //view model from top
 
     pub tab_titles: Vec<&'a str>,
     pub tab_index: usize,
@@ -121,28 +124,28 @@ impl<'a> App<'a> {
             1.0, -1.0, -1.0,
         ];
         cube_mesh.indices = vec![
-            1, 2, 3,
-            1, 3, 4,
-            5, 6, 7,
-            5, 7, 8,
+            0, 1, 2,
+            0, 2, 3,
+            4, 5, 6,
+            4, 6, 7,
+            0, 1, 5,
+            0, 4, 5,
             1, 2, 6,
-            1, 5, 6,
+            1, 6, 5,
             2, 3, 7,
             2, 7, 6,
-            3, 4, 8,
-            3, 8, 7,
-            4, 1, 5,
-            4, 8, 5,
+            3, 0, 4,
+            3, 7, 4,
         ];
         let mut cube = tobj::Model::new(cube_mesh, "cube".to_string());
         
-        App {
+        App { //default values
             mode: AppMode::Help,
 
             vertices: StateList::with_items(cube.mesh.positions.clone()),
 
             faces: StateList::with_items(cube.mesh.indices.clone()),
-
+            
             models: StateList::with_items(vec![cube]),
 
             input: "".to_string(),
@@ -150,28 +153,17 @@ impl<'a> App<'a> {
             status_mode: StatusMode::Normal,
 
             rotation_offset: 0.0,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            zoom: 10.0,
+            top_down: false,
             
             tab_titles: vec!["Vertex", "Face", "Help"],
             tab_index: 2,
         }
     }
 
-    fn obj_from_path(path: &Path) {
-        //let obj = tobj::load_obj(path);
-        //assert!(obj.is_ok());
-
-        //let (models, materials) = obj.expect("Failed to load OBJ file");
-
-        //for (i, m) in models.iter().enumerate() {
-        //    let mesh = &m.mesh();
-
-
-        //}
-
-
-    }
-
-    pub fn next_tab(&mut self) {
+    pub fn next_tab(&mut self) { //app control functions
         self.tab_index = (self.tab_index + 1) % self.tab_titles.len();
     }
 
@@ -205,7 +197,7 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn next_model(&mut self) {
+    pub fn next_model(&mut self) { //model selection functions; not yet used
 
     }
 
@@ -213,7 +205,7 @@ impl<'a> App<'a> {
 
     }
 
-    pub fn open_file(&mut self, path: &str) {
+    pub fn open_file(&mut self, path: &str) { //file read
         let mut new_path = path.to_string();
         if path.contains(".stl") {
             let mut output = Command::new("python3")
@@ -245,11 +237,11 @@ impl<'a> App<'a> {
         self.status = format!("Opened file: {}", path);
     }
 
-    pub fn write_file(&mut self) {
+    pub fn write_file(&mut self) { //file write; not yet used
 
     }
 
-    pub fn new_item(&mut self) {
+    pub fn new_item(&mut self) { //edit functions; not yet used
 
     }
 
@@ -261,12 +253,20 @@ impl<'a> App<'a> {
 
     }
 
-    fn backup(&mut self) {
+    fn backup(&mut self) { //undo functionality functions; not yet used
 
     }
 
     fn restore(&mut self) {
 
+    }
+    
+    fn zoom_in(&mut self, factor: f64) { //viewport control functions
+        self.zoom = self.zoom / 1.1
+    }
+    
+    fn zoom_out(&mut self, factor: f64) {
+        self.zoom = self.zoom * 1.1
     }
 }
 
@@ -292,10 +292,11 @@ fn main() -> io::Result<()> {
 
 fn run<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
-        app.rotation_offset += 0.01;
         
+        //draw TUI
         terminal.draw(|f| ui(f, &mut app))?;        
 
+        //read input event
         if let Event::Key(key) = event::read()? {
       	    match app.status_mode {
                 StatusMode::Normal => if key.kind == KeyEventKind::Press {
@@ -321,17 +322,29 @@ fn run<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
                             //list controls
                             KeyCode::Down => app.next_item(),
                             KeyCode::Up => app.prev_item(),
-                            KeyCode::Char('d') => app.new_item(),
+                            KeyCode::Char('n') => app.new_item(),
                             KeyCode::Char('d') => app.delete_item(),
                             KeyCode::Char('t') => app.translate(),
+                            //viewport controls
+                            KeyCode::Char('-') => app.zoom_out(1.1),
+                            KeyCode::Char('+') => app.zoom_in(1.1),
+                            KeyCode::Char('7') => app.rotation_offset += -0.02,
+                            KeyCode::Char('9') => app.rotation_offset +=  0.02,
+                            KeyCode::Char('8') => app.y_offset +=  0.05 * app.zoom,
+                            KeyCode::Char('2') => app.y_offset += -0.05 * app.zoom,
+                            KeyCode::Char('6') => app.x_offset +=  0.05 * app.zoom,
+                            KeyCode::Char('4') => app.x_offset += -0.05 * app.zoom,
+                            KeyCode::Char('5') => app.top_down = !app.top_down,
                             _ => {}
                         }
                     }
                 },
+                //generic command input mode
                 _ => if key.kind == KeyEventKind::Press { 
                     match key.code {
                         KeyCode::Enter => {
                             match app.status_mode {
+                                //specific command function handled here
                                 StatusMode::Open => {
                                     app.status_mode = StatusMode::Normal;
                                     app.open_file(&app.status.to_string());
@@ -357,8 +370,10 @@ fn run<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     }
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
+fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) { //TUI handler
     let size = f.size();
+    
+    //divide interface amongst elements
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
@@ -377,6 +392,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     draw_header(f, app, chunks[0]);
     draw_tab_menu(f, app, chunks[1]);
 
+    //render selected tab
     match app.tab_index {
         0 => draw_vertex_tab(f, app, chunks[2]),
         1 => draw_face_tab(f, app, chunks[2]),
@@ -388,7 +404,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     draw_footer(f, app, chunks[4]);
 }
 
-fn draw_header<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_header<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //header bit
 where
     B: Backend,
 {
@@ -406,7 +422,7 @@ where
     f.render_widget(header, area);
 }
 
-fn draw_tab_menu<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_tab_menu<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //tabs
 where
     B: Backend,
 {
@@ -437,12 +453,13 @@ where
     f.render_widget(tabs, area);
 }
 
-fn draw_status<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_status<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //status message
 where
     B: Backend,
 {
     let status_bar;
     
+    //match formatting to app state
     match app.status_mode {
         StatusMode::Normal => {
             status_bar = Paragraph::new(&*app.status)
@@ -485,7 +502,7 @@ where
     f.render_widget(status_bar, area);
 }
 
-fn draw_footer<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_footer<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //footer bit
 where
     B: Backend,
 {
@@ -503,7 +520,7 @@ where
     f.render_widget(footer, area);
 }
 
-fn draw_vertex_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_vertex_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //vert list & viewport
 where
     B: Backend,
 {
@@ -521,7 +538,7 @@ where
     draw_viewport(f, app, chunks[1]);
 }
 
-fn draw_face_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_face_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //face list & viewport
 where
     B: Backend,
 {
@@ -539,15 +556,16 @@ where
     draw_viewport(f, app, chunks[1]);
 }
 
-fn draw_vertex_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_vertex_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //build vertex list
 where
     B: Backend,
 {
     let mut vertices: Vec<ListItem> = vec![];
     
+    //build formatted list from vertex data
     for i in 0..app.vertices.items.len() / 3 {
         let mut lines = Spans::from(vec![
-            Span::raw(format!("Vertex {}:", i + 1)),
+            Span::raw(format!("v{}:", i + 1)),
             Span::raw(format!("    {}", app.vertices.items[3 * i])),
             Span::raw(format!("    {}", app.vertices.items[3 * i + 1])),
             Span::raw(format!("    {}", app.vertices.items[3 * i + 2])),
@@ -556,6 +574,7 @@ where
         vertices.push(lines_item);
     }
 
+    //highlight selected item
     let list_vertex = List::new(vertices)
         .block(Block::default().borders(Borders::ALL).title("Vertices"))
         .highlight_style(
@@ -567,15 +586,16 @@ where
     f.render_stateful_widget(list_vertex, area, &mut app.vertices.state);
 }
 
-fn draw_face_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_face_list<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //build face list
 where
     B: Backend,
 {
     let mut faces: Vec<ListItem> = vec![];
     
+    //build formatted list from vertex data
     for i in 0..app.faces.items.len() / 3 {
         let mut lines = Spans::from(vec![
-            Span::raw(format!("Face {}:", i + 1)),
+            Span::raw(format!("f{}:", i + 1)),
             Span::raw(format!("    {}", app.faces.items[3 * i])),
             Span::raw(format!("    {}", app.faces.items[3 * i + 1])),
             Span::raw(format!("    {}", app.faces.items[3 * i + 2])),
@@ -584,6 +604,7 @@ where
         faces.push(lines_item);
     }
 
+    //highlight selected item
     let list_face = List::new(faces)
         .block(Block::default().borders(Borders::ALL).title("Faces"))
         .highlight_style(
@@ -595,42 +616,177 @@ where
     f.render_stateful_widget(list_face, area, &mut app.faces.state);
 }
 
-fn draw_viewport<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn draw_viewport<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //draw viewport; just redirect to necessary function
 where
     B: Backend,
 {
+    if app.tab_index == 0 {
+        dot_render(f, app, area);
+    } else {
+        line_render(f, app, area);
+    };
+}
+
+fn dot_render<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //render dot model
+where
+    B: Backend,
+{
+    let x_zoom = app.zoom;
+    let y_zoom = app.zoom * 2.0 * area.height as f64 / area.width as f64;
+    let (y_component, z_component) = match app.top_down { //determine whether model will rotate about y-axis or z-axis
+        false => (1, 2),
+        true  => (2, 1),
+    };
+    
     let mut viewport = Canvas::default()
     	.block(Block::default().title("Viewport").borders(Borders::ALL))
-    	.x_bounds([-10.0, 10.0])
-    	.y_bounds([-10.0, 10.0]);
-    
-    let mut edgemap: Vec<bool> = vec![false; app.vertices.items.len() * app.vertices.items.len()];
+    	.x_bounds([x_zoom * -1.0, x_zoom])
+    	.y_bounds([y_zoom * -1.0, y_zoom]);
     
     let positions = &app.vertices.items;
-    
     let mut points: Vec<(f64, f64)> = Vec::new();
-      
-    for i in 0..positions.len() / 3 {
-        let j = i * 3;
-        let x = positions[j] as f64 * app.rotation_offset.sin() + positions[j + 2] as f64 * app.rotation_offset.cos();
-        points.push((x, positions[j+1] as f64));
+    
+    //convert raw position data into renderable points
+    for index in 0..positions.len() / 3 {
+        let i = index * 3;
+        //basic sine/cosine rotation transform about y-axis
+        let x = {
+            positions[i] as f64 * 
+            app.rotation_offset.sin() + 
+            positions[i + z_component] as f64 * 
+            app.rotation_offset.cos()
+        };
+        points.push((x, positions[i + y_component] as f64));
     }
     
+    //draw points
     viewport = viewport.paint(|ctx| {
         ctx.draw(&Points {
             coords: &points,
             color: Color::White,
         });
+        //highlight selected point
+        match app.vertices.state.selected() {
+            Some(value) => {
+                let i = value * 3;
+                let x = {
+                    positions[i] as f64 * 
+                    app.rotation_offset.sin() + 
+                    positions[i + z_component] as f64 * 
+                    app.rotation_offset.cos()
+                };
+                ctx.draw(&Points {
+                    coords: &[(x, positions[i + y_component] as f64)],
+                    color: Color::Yellow,
+                });
+            }
+            _ => {}
+        }
     });
 
     f.render_widget(viewport, area);
 }
 
-fn draw_help<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+fn line_render<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //render wireframe
 where
     B: Backend,
 {
-    let help = Paragraph::new( //formatted as it would be displayed
+    let x_zoom = app.zoom;
+    let y_zoom = app.zoom * 2.0 * area.height as f64 / area.width as f64;
+    let (y_component, z_component) = match app.top_down {
+        false => (1, 2),
+        true  => (2, 1),
+    };
+    
+    let mut viewport = Canvas::default()
+    	.block(Block::default().title("Viewport").borders(Borders::ALL))
+    	.x_bounds([x_zoom * -1.0 + app.x_offset, x_zoom + app.x_offset])
+    	.y_bounds([y_zoom * -1.0 + app.y_offset, y_zoom + app.y_offset]);
+    
+    //draw lines between each vertex of each face
+    viewport = viewport.paint(|ctx| {
+        let positions = &app.vertices.items;
+        let indices = &app.faces.items;
+        
+        for i in 0..indices.len() {
+            let j = match i % 3 {
+                2 => i - 2,
+                _ => i + 1,
+            };
+            let f1 = indices[i] as usize * 3;
+            let f2 = indices[j] as usize * 3;
+            let x1 = {
+                positions[f1] as f64 * 
+                app.rotation_offset.sin() + 
+                positions[f1 + z_component] as f64 * 
+                app.rotation_offset.cos()
+            };
+            let x2 = {
+                positions[f2] as f64 * 
+                app.rotation_offset.sin() + 
+                positions[f2 + z_component] as f64 * 
+                app.rotation_offset.cos()
+            };
+            let y1 = positions[f1 + y_component] as f64;
+            let y2 = positions[f2 + y_component] as f64;
+            
+            ctx.draw(&Line {
+                x1: x1,
+                x2: x2,
+                y1: y1,
+                y2: y2,
+                color: Color::White,
+            });
+        }
+        
+        //highlight selected edges
+        match app.faces.state.selected() {
+            Some(value) => {
+                for i in 0..3 {
+                    let j = match i % 3 {
+                        2 => i - 2,
+                        _ => i + 1,
+                    };
+                    let f1 = indices[value * 3 + i] as usize * 3;
+                    let f2 = indices[value * 3 + j] as usize * 3;
+                    let x1 = {
+                        positions[f1] as f64 * 
+                        app.rotation_offset.sin() + 
+                        positions[f1 + z_component] as f64 * 
+                        app.rotation_offset.cos()
+                    };
+                    let x2 = {
+                        positions[f2] as f64 * 
+                        app.rotation_offset.sin() + 
+                        positions[f2 + z_component] as f64 * 
+                        app.rotation_offset.cos()
+                    };
+                    let y1 = positions[f1 + y_component] as f64;
+                    let y2 = positions[f2 + y_component] as f64;
+            
+                    ctx.draw(&Line {
+                        x1: x1,
+                        x2: x2,
+                        y1: y1,
+                        y2: y2,
+                        color: Color::Yellow,
+                    });
+                }
+            }
+            _ => {}
+        }
+    });
+
+    f.render_widget(viewport, area);
+}
+
+
+
+fn draw_help<B>(f: &mut Frame<B>, app: &mut App, area: Rect) //help menu, stored in compiled program as string literal
+where
+    B: Backend,
+{
+    let help = Paragraph::new( //formatted here as it would be displayed
 "Main Commands\n
     Q | Quit        - Close the program\n
 \n
